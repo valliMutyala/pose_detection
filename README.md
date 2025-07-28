@@ -140,17 +140,7 @@ This script processes each 5-second video segment and saves all detected pose ke
 
 This is the main application. It uses your webcam, plays the segmented dance, and provides live feedback.
 
-1.  Open `live_segmented_dance_comparison.py`.
-
-2.  Verify that `SEGMENTS_FOLDER` and `REFERENCE_KEYPOINTS_FILE` are correctly set.
-
-3.  **CRUCIAL TUNING:** Adjust `TARGET_APP_FPS` at the top of the script.
-
-      * Start with `TARGET_APP_FPS = 15`.
-      * If audio still desynchronizes or loops irritatingly, **reduce this value further** (e.g., `10`, `7`). This makes the video display choppier but helps CPU keep up for A/V sync.
-      * Optionally, within `extract_landmarks_from_frame` function, you can uncomment and adjust `cv2.resize(frame, (width, height))` before `pose.process()` to reduce input resolution to MediaPipe for significant performance gains (may slightly impact accuracy).
-
-4.  Run the application:
+  Run the application:
 
     ```bash
     python live_segmented_dance_comparison.py
@@ -161,23 +151,6 @@ This is the main application. It uses your webcam, plays the segmented dance, an
       * The application will provide real-time similarity scores and feedback.
       * It will loop the current segment if your mastery is below the `SEGMENT_MASTERY_THRESHOLD_PERCENT`.
       * Press `q` on either window to quit the application.
-
-## Project Structure
-
-```
-.
-├── live_segmented_dance_comparison.py  # Main application for live comparison
-├── extract_segmented_dance_keypoints.py # Extracts keypoints from video segments
-├── split_video.py                     # Utility to split long videos into segments
-├── download_youtube_video.py          # Optional: Utility to download YouTube videos
-├── requirements.txt                   # List of Python dependencies
-├── bharatanatyam.mp4                  # Your original full reference dance video
-├── segmented_dance_keypoints.pkl      # Generated: Keypoints for all dance segments
-├── bharatanatyam_segments/            # Created by split_video.py
-│   ├── bharatanatyam_part001.mp4
-│   ├── bharatanatyam_part002.mp4
-│   └── ...                            # Other 5-second video segments
-└── .venv/                             # Python Virtual Environment folder
 ```
 
 ## Troubleshooting
