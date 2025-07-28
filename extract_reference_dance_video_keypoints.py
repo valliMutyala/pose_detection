@@ -5,14 +5,9 @@ import pickle
 import os
 
 # --- Configuration ---
-REFERENCE_VIDEO_PATH = "bharatanatyam1.mp4" 
-OUTPUT_KEYPOINTS_FILE = "reference_dance_keypoints.pkl" 
-DISPLAY_VIDEO_DURING_EXTRACTION = True 
-
-# Display window settings (adjust these if your video is very large/small)
-DISPLAY_WIDTH = 640 # Recommended width for display
-DISPLAY_HEIGHT = 480 # Recommended height for display (maintains aspect ratio if possible)
-
+SEGMENTS_FOLDER = "bharatanatyam_segments" # The folder where split videos are
+OUTPUT_KEYPOINTS_FILE = "segmented_dance_keypoints.pkl" # Master file for all segment keypoints
+DISPLAY_VIDEO_DURING_EXTRACTION = False # Set to True if you want to see extraction for each segment
 
 # --- Initialize MediaPipe Pose ---
 mp_pose = mp.solutions.pose
@@ -30,84 +25,67 @@ def extract_landmarks_from_frame(frame, pose_model):
     
     return landmarks, results
 
-# --- Main script execution ---
-def process_reference_video_for_keypoints(video_path, output_file, display_video):
-    if not os.path.exists(video_path):
-        print(f"Error: Reference video file not found at '{video_path}'")
-        return
-
+def process_single_video_for_keypoints(video_path, pose_model, display_video):
     cap = cv2.VideoCapture(video_path)
-
     if not cap.isOpened():
-        print(f"Error: Could not open reference video file '{video_path}'")
-        # Try different backends if video doesn't open (less common but happens)
-        # cap = cv2.VideoCapture(video_path, cv2.CAP_FFMPEG) # Example: force FFmpeg backend
-        return
+        print(f"  Error: Could not open video file '{video_path}'")
+        return None
 
-    # Get original video dimensions to maintain aspect ratio
-    original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    video_keypoints_sequence = []
     
-    # Calculate aspect ratio
-    aspect_ratio = original_width / original_height
-    
-    # Adjust DISPLAY_HEIGHT based on DISPLAY_WIDTH to maintain aspect ratio
-    calculated_display_height = int(DISPLAY_WIDTH / aspect_ratio)
-    
-    # If the calculated height is too small or too large, you might want to constrain it
-    if calculated_display_height > 1000 or calculated_display_height < 200: # Example constraints
-        calculated_display_height = DISPLAY_HEIGHT # Fallback to default if aspect ratio results in weird size
-        print(f"Warning: Calculated display height ({calculated_display_height}) is unusual. Using default {DISPLAY_HEIGHT}.")
-
-
-    all_video_keypoints_sequence = []
-    frame_count = 0
-
-    print(f"Starting to extract keypoints from reference video: {video_path}")
-
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
-            break # End of video or error reading frame
-
-        frame_count += 1
-        landmarks, results = extract_landmarks_from_frame(frame, pose)
+            break
         
-        all_video_keypoints_sequence.append(landmarks) 
+        landmarks, results = extract_landmarks_from_frame(frame, pose_model)
+        video_keypoints_sequence.append(landmarks) 
         
         if display_video:
-            # Resize the frame for consistent display
-            # Use cv2.INTER_AREA for shrinking, cv2.INTER_LINEAR for zooming
-            display_frame = cv2.resize(frame, (DISPLAY_WIDTH, calculated_display_height), interpolation=cv2.INTER_AREA)
-
-            # Draw landmarks on the RESIZED frame
             if results and results.pose_landmarks: 
-                # Need to convert normalized landmarks back to absolute pixels for drawing on resized frame
-                # This is already handled internally by mp_drawing for display purposes when it gets the results obj.
-                mp_drawing.draw_landmarks(display_frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-            
-            cv2.imshow('Reference Video Extraction', display_frame)
-
-        # Use waitKey(0) to step through frames manually for detailed inspection,
-        # or a higher number like 10-30 for slower, but continuous playback.
-        # For actual video speed, keep it at 1, but be aware of skipping if processing is slow.
-        key = cv2.waitKey(1) & 0xFF # Keep at 1 for close to real-time (will skip frames if processing is slow)
-        # key = cv2.waitKey(0) & 0xFF # Uncomment for manual frame-by-frame (press any key for next frame)
-
-        if key == ord('q'):
-            print("Reference video extraction interrupted by user.")
-            break
+                mp_drawing.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+            cv2.imshow('Extracting Segment', frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'): # Allow early quit for display
+                break
 
     cap.release()
-    cv2.destroyAllWindows()
+    if display_video:
+        cv2.destroyWindow('Extracting Segment')
+    
+    return video_keypoints_sequence
 
-    if all_video_keypoints_sequence:
-        with open(output_file, "wb") as f:
-            pickle.dump(all_video_keypoints_sequence, f)
-        print(f"Successfully extracted and saved keypoints for {len(all_video_keypoints_sequence)} frames to '{output_file}'.")
-    else:
-        print("No frames processed or no poses detected in the reference video. No keypoints saved.")
-
-# Run the process
+# --- Main script execution ---
 if __name__ == "__main__":
-    process_reference_video_for_keypoints(REFERENCE_VIDEO_PATH, OUTPUT_KEYPOINTS_FILE, DISPLAY_VIDEO_DURING_EXTRACTION)
+    if not os.path.exists(SEGMENTS_FOLDER):
+        print(f"Error: Segments folder '{SEGMENTS_FOLDER}' not found. Please run split_video.py first.")
+        exit()
+
+    all_segments_keypoints = {} # Dictionary to store keypoints for all segments
+
+    # Get sorted list of video files in the segments folder
+    video_files = sorted([f for f in os.listdir(SEGMENTS_FOLDER) if f.endswith(('.mp4', '.avi', '.mov'))])
+
+    if not video_files:
+        print(f"No video files found in '{SEGMENTS_FOLDER}'.")
+        exit()
+
+    print(f"Starting keypoint extraction for videos in '{SEGMENTS_FOLDER}'...")
+
+    for video_filename in video_files:
+        video_path = os.path.join(SEGMENTS_FOLDER, video_filename)
+        print(f"  Processing: {video_filename}")
+        
+        keypoints = process_single_video_for_keypoints(video_path, pose, DISPLAY_VIDEO_DURING_EXTRACTION)
+        
+        if keypoints is not None:
+            all_segments_keypoints[video_filename] = keypoints
+            print(f"  Extracted {len(keypoints)} frames for '{video_filename}'.")
+        else:
+            print(f"  Failed to extract keypoints or no pose detected in '{video_filename}'.")
+
+    if all_segments_keypoints:
+        with open(OUTPUT_KEYPOINTS_FILE, "wb") as f:
+            pickle.dump(all_segments_keypoints, f)
+        print(f"\nSuccessfully extracted and saved keypoints for {len(all_segments_keypoints)} segments to '{OUTPUT_KEYPOINTS_FILE}'.")
+    else:
+        print("\nNo keypoints extracted for any segment. Check videos and MediaPipe detection.")
