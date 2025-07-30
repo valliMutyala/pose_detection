@@ -1,1 +1,7 @@
-.venv
+# Ignore virtual environments
+venv/
+*.pyc
+__pycache__/
+*.pyd
+*.dll
+*.exe

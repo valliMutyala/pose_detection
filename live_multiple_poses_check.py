@@ -2,57 +2,48 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import pickle
-import time # Import time module for a brief pause
+import time
+import os
 
 # --- Configuration ---
-SIMILARITY_THRESHOLD = 0.90 # Set the required similarity to advance
-INSTRUCTION_MESSAGE = "Adjust your pose!" # General instruction
+SIMILARITY_THRESHOLD = 0.90
+POSE_HOLD_DURATION = 2
+INSTRUCTION_MESSAGE = "Adjust your pose!"
 SUCCESS_MESSAGE = "Great job! Moving to next pose..."
-POSE_HOLD_DURATION = 2 # Seconds to hold the pose after reaching threshold before advancing
 
-# --- Load all reference keypoints and images ---
-output_file = "all_reference_keypoints.pkl"
-try:
-    with open(output_file, "rb") as f:
-        all_reference_keypoints_dict = pickle.load(f)
-except FileNotFoundError:
-    print(f"Error: '{output_file}' not found. Please run save_multiple_references.py first.")
+# --- Load reference keypoints ---
+REFERENCE_FILE = "all_reference_keypoints.pkl"
+if not os.path.exists(REFERENCE_FILE):
+    print(f"❌ Error: '{REFERENCE_FILE}' not found. Please run save_multiple_references.py first.")
     exit()
 
-# List of images and corresponding keys in the dictionary for display order
-# IMPORTANT: These filenames must match the images you used when creating the .pkl file
+with open(REFERENCE_FILE, "rb") as f:
+    all_reference_keypoints_dict = pickle.load(f)
+
+# --- Pose sequence ---
 POSE_SEQUENCE = [
     {"name": "Aramandi", "image": "pose1.jpg"},
     {"name": "Tribhanga", "image": "pose2.jpg"},
     {"name": "Katakamukha", "image": "pose3.jpg"},
     {"name": "Upward Mudra", "image": "pose4.jpg"},
     {"name": "Grounded Pose", "image": "pose5.jpg"},
-    # Add more as needed, ensure names match keys in all_reference_keypoints_dict
 ]
 
-current_pose_index = 0
-current_target_pose_name = POSE_SEQUENCE[current_pose_index]["name"]
-current_target_keypoints = all_reference_keypoints_dict[current_target_pose_name]
-current_target_image_path = POSE_SEQUENCE[current_pose_index]["image"]
-current_target_image = cv2.imread(current_target_image_path)
-
-if current_target_image is None:
-    print(f"Error: Could not load initial target image: {current_target_image_path}")
-    exit()
-
-# --- Initialize MediaPipe Pose ---
+# --- Initialize Pose Detector ---
 mp_pose = mp.solutions.pose
 pose = mp_pose.Pose()
 mp_drawing = mp.solutions.drawing_utils
 
-# --- Helper Functions ---
 def extract_landmarks_from_frame(frame):
     results = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
     if results.pose_landmarks:
-        return np.array([[lm.x, lm.y, lm.z] for lm in results.pose_landmarks.landmark]), results.pose_landmarks
+        keypoints = np.array([[lm.x, lm.y, lm.z] for lm in results.pose_landmarks.landmark])
+        return keypoints, results.pose_landmarks
     return None, None
 
 def cosine_similarity(a, b):
+    if a is None or b is None or a.shape != b.shape:
+        return 0.0
     a = a.flatten()
     b = b.flatten()
     norm_a = np.linalg.norm(a)
@@ -61,103 +52,84 @@ def cosine_similarity(a, b):
         return 0.0
     return np.dot(a, b) / (norm_a * norm_b)
 
-# --- Start webcam ---
-cap = cv2.VideoCapture(0)
+# --- Load initial target pose ---
+def load_target_pose(index):
+    pose_name = POSE_SEQUENCE[index]["name"]
+    image_path = POSE_SEQUENCE[index]["image"]
+    keypoints = all_reference_keypoints_dict.get(pose_name, None)
+    image = cv2.imread(image_path)
+    if keypoints is None or image is None:
+        print(f"❌ Failed to load data for pose: {pose_name}. Check image and keypoint file.")
+        return None, None, None
+    image_resized = cv2.resize(image, (400, int(400 * image.shape[0] / image.shape[1])))
+    return pose_name, keypoints, image_resized
 
-if not cap.isOpened():
-    print("Error: Could not open webcam.")
+# --- Initialize pose ---
+current_pose_index = 0
+pose_name, target_keypoints, target_image = load_target_pose(current_pose_index)
+if target_keypoints is None:
     exit()
 
-# Resize reference image for display
-display_width = 400
-display_height = int(current_target_image.shape[0] * (display_width / current_target_image.shape[1]))
-display_target_image = cv2.resize(current_target_image, (display_width, display_height))
+# --- Webcam ---
+cap = cv2.VideoCapture(0)
+if not cap.isOpened():
+    print("❌ Error: Could not open webcam.")
+    exit()
 
-# Variables for automatic advancement
-pose_achieved_time = None # To track when the pose threshold was first met
-
-print("Webcam opened. Try to match the pose. Press 'q' to quit.")
+pose_achieved_time = None
+print("📷 Webcam open. Match the pose! Press 'q' to quit.")
 
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
         break
 
-    frame = cv2.flip(frame, 1) # Flip for natural webcam mirroring
+    frame = cv2.flip(frame, 1)
 
-    live_keypoints, live_pose_landmarks_obj = extract_landmarks_from_frame(frame)
+    live_keypoints, live_landmarks = extract_landmarks_from_frame(frame)
+    similarity = cosine_similarity(target_keypoints, live_keypoints)
 
-    sim = 0.0 # Default similarity
-    feedback_message = INSTRUCTION_MESSAGE
-    message_color = (0, 165, 255) # Orange for instructions
+    if live_landmarks:
+        mp_drawing.draw_landmarks(frame, live_landmarks, mp_pose.POSE_CONNECTIONS)
+
+    feedback = INSTRUCTION_MESSAGE
+    color = (0, 165, 255)  # Orange default
 
     if live_keypoints is not None:
-        sim = cosine_similarity(current_target_keypoints, live_keypoints)
-
-        if sim >= SIMILARITY_THRESHOLD:
-            message_color = (0, 255, 0) # Green for success
-            if pose_achieved_time is None: # First time threshold is met for this pose
+        if similarity >= SIMILARITY_THRESHOLD:
+            if pose_achieved_time is None:
                 pose_achieved_time = time.time()
-                feedback_message = f"Perfect! Hold for {POSE_HOLD_DURATION}s..."
-            else: # Already holding the pose
-                remaining_time = POSE_HOLD_DURATION - (time.time() - pose_achieved_time)
-                if remaining_time <= 0:
-                    feedback_message = SUCCESS_MESSAGE
-                else:
-                    feedback_message = f"Perfect! Hold for {remaining_time:.1f}s..."
-
-
-            # Check if it's time to advance
-            if pose_achieved_time is not None and (time.time() - pose_achieved_time) >= POSE_HOLD_DURATION:
-                # Reset timer
+            elapsed = time.time() - pose_achieved_time
+            remaining = POSE_HOLD_DURATION - elapsed
+            if remaining <= 0:
+                feedback = SUCCESS_MESSAGE
+                color = (0, 255, 0)
+                current_pose_index = (current_pose_index + 1) % len(POSE_SEQUENCE)
+                pose_name, target_keypoints, target_image = load_target_pose(current_pose_index)
                 pose_achieved_time = None
-                
-                # Move to next pose
-                current_pose_index = (current_pose_index + 1) % len(POSE_SEQUENCE) # Cycle through poses
-                current_target_pose_name = POSE_SEQUENCE[current_pose_index]["name"]
-                current_target_keypoints = all_reference_keypoints_dict[current_target_pose_name]
-
-                # Load and resize the next target image
-                current_target_image_path = POSE_SEQUENCE[current_pose_index]["image"]
-                current_target_image = cv2.imread(current_target_image_path)
-                if current_target_image is None:
-                    print(f"Error: Could not load next target image: {current_target_image_path}. Exiting.")
-                    break
-                display_target_image = cv2.resize(current_target_image, (display_width, display_height))
-                print(f"Moved to next pose: {current_target_pose_name}. Try to match this pose!")
+                time.sleep(0.8)
+                print(f"➡️ Next pose: {pose_name}")
+            else:
+                feedback = f"Perfect! Hold for {remaining:.1f}s..."
+                color = (0, 255, 0)
         else:
-            feedback_message = INSTRUCTION_MESSAGE
-            message_color = (0, 165, 255) # Orange for instructions
-            pose_achieved_time = None # Reset timer if pose is no longer held above threshold
-
-        # Draw landmarks on the live frame
-        if live_pose_landmarks_obj:
-            mp_drawing.draw_landmarks(frame, live_pose_landmarks_obj, mp_pose.POSE_CONNECTIONS)
+            pose_achieved_time = None
     else:
-        feedback_message = 'Pose not detected'
-        message_color = (0, 0, 255) # Red for no detection
-        pose_achieved_time = None # Reset timer if pose is not detected
+        feedback = "Pose not detected"
+        color = (0, 0, 255)
 
-    # Display current pose name
-    cv2.putText(frame, f'Target: {current_target_pose_name}', (10, frame.shape[0] - 100),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2) # Yellow text
+    # UI Overlays
+    h = frame.shape[0]
+    cv2.putText(frame, f'Target: {pose_name}', (10, h - 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+    cv2.putText(frame, f'Similarity: {similarity:.2f}', (10, h - 60), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+    cv2.putText(frame, feedback, (10, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
 
-    # Display similarity
-    cv2.putText(frame, f'Similarity: {sim:.2f}', (10, frame.shape[0] - 60),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, message_color, 2)
+    # Display frames
+    cv2.imshow("Live Pose Comparison", frame)
+    cv2.imshow("Target Pose", target_image)
 
-    # Display feedback message
-    cv2.putText(frame, feedback_message, (10, frame.shape[0] - 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, message_color, 2)
-
-
-    cv2.imshow("Live Pose Comparison", frame) # Window for webcam feed
-    cv2.imshow("Target Pose", display_target_image) # Window for displaying the target image
-
-    key = cv2.waitKey(1) & 0xFF
-    if key == ord('q'):
+    if cv2.waitKey(1) & 0xFF == ord('q'):
         break
-
 
 cap.release()
 cv2.destroyAllWindows()
