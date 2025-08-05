@@ -1,5 +1,14 @@
 opencv-python
 mediapipe
-numpy==2.2.1
+numpy
+moviepy==1.0.3  # Crucial: Pin to 1.x version for 'moviepy.editor'
 ffpyplayer
-moviepy==1.0.3 
+yt-dlp
+pillow
+imageio
+imageio_ffmpeg
+decorator
+proglog
+python-dotenv
+tqdm
+colorama
