@@ -1,9 +1,9 @@
 from moviepy.editor import VideoFileClip
 import os
 
-VIDEO_PATH = "videoplayback (1).mp4"
-OUTPUT_PREFIX = "bharatanatyam_part"
-OUTPUT_FOLDER = "bharatanatyam_segments"
+VIDEO_PATH = "bharatanatyam.mp4"
+OUTPUT_PREFIX = "bharatanatyam1_part"
+OUTPUT_FOLDER = "bharatanatyam_segments1"
 CHUNK_DURATION = 8  # seconds
 
 def clear_old_segments(folder):

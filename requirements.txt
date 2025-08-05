@@ -2,3 +2,4 @@ opencv-python
 mediapipe
 numpy==2.2.1
 ffpyplayer
+moviepy==1.0.3 
